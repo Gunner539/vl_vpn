@@ -1,0 +1,268 @@
+#!/bin/bash
+# Update package lists
+sudo apt update
+
+# Install necessary packages with automatic "Y" confirmation
+sudo apt install -y openvpn easy-rsa net-tools
+
+# Install сurl 
+sudo apt install -y curl
+
+# Определение цветов для вывода текста в терминале
+red='\033[0;31m'    # Красный цвет для сообщений об ошибках
+green='\033[0;32m'  # Зеленый цвет для успешных сообщений
+yellow='\033[0;33m' # Желтый цвет для предупреждений
+plain='\033[0m'     # Сброс цвета
+
+# Сохранение текущей директории работы скрипта
+cur_dir=$(pwd)
+
+# Проверка на выполнение скрипта с правами суперпользователя (root)
+[[ $EUID -ne 0 ]] && echo -e "${red}Fatal error: ${plain} Please run this script with root privilege \n " && exit 1
+
+# Определение операционной системы и установка переменной release
+if [[ -f /etc/os-release ]]; then
+    source /etc/os-release  # Использование файла os-release для определения ID дистрибутива
+    release=$ID
+elif [[ -f /usr/lib/os-release ]]; then
+    source /usr/lib/os-release  # Использование альтернативного местоположения os-release
+    release=$ID
+else
+    echo "Failed to check the system OS, please contact the author!" >&2  # Сообщение об ошибке, если не удается определить ОС
+    exit 1
+fi
+echo "The OS release is: $release"  # Вывод обнаруженной ОС
+
+# Функция для определения архитектуры процессора
+arch3xui() {
+    case "$(uname -m)" in
+    x86_64 | x64 | amd64) echo 'amd64' ;;  # Для 64-битных процессоров Intel/AMD
+    i*86 | x86) echo '386' ;;              # Для 32-битных процессоров Intel/AMD
+    armv8* | armv8 | arm64 | aarch64) echo 'arm64' ;;  # Для ARM64 процессоров
+    armv7* | armv7 | arm) echo 'armv7' ;;  # Для ARMv7 процессоров
+    armv6* | armv6) echo 'armv6' ;;        # Для ARMv6 процессоров
+    armv5* | armv5) echo 'armv5' ;;        # Для ARMv5 процессоров
+    *) echo -e "${green}Unsupported CPU architecture! ${plain}" && rm -f install.sh && exit 1 ;;  # Сообщение об ошибке для не поддерживаемых архитектур
+    esac
+}
+# Вывести архитектуру процессора, используя функцию arch3xui
+echo "arch: $(arch3xui)"
+
+# Инициализация переменной для хранения основной версии операционной системы
+os_version=""
+# Извлечение основной версии из файла /etc/os-release и сохранение ее в переменную os_version
+os_version=$(grep -i version_id /etc/os-release | cut -d \" -f2 | cut -d . -f1)
+
+# Проверка версии операционной системы для различных дистрибутивов
+if [[ "${release}" == "centos" ]]; then
+    # Если версия CentOS меньше 8, вывести сообщение о необходимости использовать CentOS 8 или выше и завершить скрипт
+    if [[ ${os_version} -lt 8 ]]; then
+        echo -e "${red} Please use CentOS 8 or higher ${plain}\n" && exit 1
+    fi
+elif [[ "${release}" == "ubuntu" ]]; then
+    # Аналогично для Ubuntu, требуется версия 20 или выше
+    if [[ ${os_version} -lt 20 ]]; then
+        echo -e "${red} Please use Ubuntu 20 or higher version!${plain}\n" && exit 1
+    fi
+elif [[ "${release}" == "fedora" ]]; then
+    # Для Fedora требуется версия 36 или выше
+    if [[ ${os_version} -lt 36 ]]; then
+        echo -e "${red} Please use Fedora 36 or higher version!${plain}\n" && exit 1
+    fi
+elif [[ "${release}" == "debian" ]]; then
+    # Для Debian требуется версия 11 или выше
+    if [[ ${os_version} -lt 11 ]]; then
+        echo -e "${red} Please use Debian 11 or higher ${plain}\n" && exit 1
+    fi
+elif [[ "${release}" == "almalinux" ]]; then
+    # Для AlmaLinux требуется версия 9 или выше
+    if [[ ${os_version} -lt 9 ]]; then
+        echo -e "${red} Please use AlmaLinux 9 or higher ${plain}\n" && exit 1
+    fi
+elif [[ "${release}" == "rocky" ]]; then
+    # Для RockyLinux требуется версия 9 или выше
+    if [[ ${os_version} -lt 9 ]]; then
+        echo -e "${red} Please use RockyLinux 9 or higher ${plain}\n" && exit 1
+    fi
+elif [[ "${release}" == "arch" ]]; then
+    # Специфическая проверка для Arch Linux, без требований к версии
+    echo "Your OS is ArchLinux"
+elif [[ "${release}" == "manjaro" ]]; then
+    # Специфическая проверка для Manjaro, без требований к версии
+    echo "Your OS is Manjaro"
+elif [[ "${release}" == "armbian" ]]; then
+    # Специфическая проверка для Armbian, без требований к версии
+    echo "Your OS is Armbian"
+else
+    # Если ОС не определена или не поддерживается, вывести сообщение об ошибке
+    echo -e "${red}Failed to check the OS version, please contact the author!${plain}" && exit 1
+fi
+
+# Функция для установки базовых пакетов, необходимых для работы
+install_base() {
+    # Выбор команды установки в зависимости от дистрибутива
+    case "${release}" in
+    centos | almalinux | rocky)
+        yum -y update && yum install -y -q wget curl tar  # Для CentOS, AlmaLinux, RockyLinux используется yum
+        ;;
+    fedora)
+        dnf -y update && dnf install -y -q wget curl tar  # Для Fedora используется dnf
+        ;;
+    arch | manjaro)
+        pacman -Syu && pacman -Syu --noconfirm wget curl tar  # Для Arch и Manjaro используется pacman
+        ;;
+    *)
+        apt-get update && apt install -y -q wget curl tar  # Для Debian, Ubuntu и других, использующих apt
+        ;;
+    esac
+}
+
+# Функция для конфигурации после установки x-ui, предназначенная для настройки безопасности
+config_after_install() {
+    # Сообщение пользователю о завершении установки и предложение настроить панель управления
+    echo -e "${yellow}Install/update finished! For security it's recommended to modify panel settings ${plain}"
+    # Запрос подтверждения на продолжение настройки
+    read -p "Do you want to continue with the modification [y/n]?": config_confirm
+    # Если пользователь согласен, запрашиваются данные для настройки
+    if [[ "${config_confirm}" == "y" || "${config_confirm}" == "Y" ]]; then
+        # Запрос имени пользователя для панели управления
+        read -p "Please set up your username:" config_account
+        echo -e "${yellow}Your username will be:${config_account}${plain}"
+        # Запрос пароля для панели управления
+        read -p "Please set up your password:" config_password
+        echo -e "${yellow}Your password will be:${config_password}${plain}"
+        # Запрос порта для панели управления
+        read -p "Please set up the panel port:" config_port
+        echo -e "${yellow}Your panel port is:${config_port}${plain}"
+        # Применение настроек
+        echo -e "${yellow}Initializing, please wait...${plain}"
+        /usr/local/x-ui/x-ui setting -username ${config_account} -password ${config_password}
+        echo -e "${yellow}Account name and password set successfully!${plain}"
+        /usr/local/x-ui/x-ui setting -port ${config_port}
+        echo -e "${yellow}Panel port set successfully!${plain}"
+    else
+
+
+        # Если пользователь отменяет настройку, выводится сообщение об отмене
+        echo -e "${red}cancel...${plain}"
+        # Проверка наличия файла базы данных x-ui для определения, является ли установка новой
+
+if [[ ! -f "/etc/x-ui/x-ui.db" ]]; then
+  
+# Установка порта для x-ui
+    /usr/local/x-ui/x-ui setting -port 12345
+    echo -e "Port 12345 has been set for x-ui."
+
+    # Генерация случайных имени пользователя и пароля для новой установки
+    local usernameTemp=$(head -c 6 /dev/urandom | base64)
+    local passwordTemp=$(head -c 6 /dev/urandom | base64)
+    /usr/local/x-ui/x-ui setting -username "${usernameTemp}" -password "${passwordTemp}"
+
+    # Получение IP-адреса сервера
+    server_ip=$(curl -4 ifconfig.co)
+
+    # Отображение данных для входа в панель 
+
+echo -e "This is a fresh installation, will generate random login info for security concerns:"
+echo -e "###############################################"
+echo -e "Username: \e[32m${usernameTemp}\e[0m"
+echo -e "Password: \e[32m${passwordTemp}\e[0m"
+echo -e "Address Web Panel URL: \e[32mhttp://$server_ip:12345/panel/inbounds\e[0m"
+echo -e "###############################################"
+echo -e "If you forgot your login info, you can type x-ui and then type 8 to check after installation."
+
+fi
+ fi
+    # Выполнение миграции x-ui после настройки или обновления
+    /usr/local/x-ui/x-ui migrate
+}
+
+
+# Функция для установки x-ui
+install_x-ui() {
+    # Переход в директорию /usr/local/ для установки
+    cd /usr/local/
+
+    # Проверка на наличие аргументов скрипта. Если аргументов нет, ищет последнюю версию x-ui
+    if [ $# == 0 ]; then
+        # Получение последней версии x-ui с GitHub
+        last_version=$(curl -Ls "https://api.github.com/repos/MHSanaei/3x-ui/releases/latest" | grep '"tag_name":' | sed -E 's/.*"([^"]+)".*/\1/')
+        # Проверка, удалось ли получить последнюю версию
+        if [[ ! -n "$last_version" ]]; then
+            echo -e "${red}Failed to fetch x-ui version, it maybe due to Github API restrictions, please try it later${plain}"
+            exit 1
+        fi
+        # Сообщение о начале установки последней версии
+        echo -e "Got x-ui latest version: ${last_version}, beginning the installation..."
+        # Скачивание архива последней версии x-ui
+        wget -N --no-check-certificate -O /usr/local/x-ui-linux-$(arch3xui).tar.gz https://github.com/MHSanaei/3x-ui/releases/download/${last_version}/x-ui-linux-$(arch3xui).tar.gz
+        # Проверка успешности скачивания
+        if [[ $? -ne 0 ]]; then
+            echo -e "${red}Downloading x-ui failed, please be sure that your server can access Github ${plain}"
+            exit 1
+        fi
+    else
+        # Если скрипт запущен с аргументом, использует его как указанную версию x-ui
+        last_version=$1
+        # Формирование URL для скачивания
+        url="https://github.com/MHSanaei/3x-ui/releases/download/${last_version}/x-ui-linux-$(arch3xui).tar.gz"
+        # Скачивание указанной версии x-ui
+        echo -e "Beginning to install x-ui $1"
+        wget -N --no-check-certificate -O /usr/local/x-ui-linux-$(arch3xui).tar.gz ${url}
+        # Проверка успешности скачивания
+        if [[ $? -ne 0 ]]; then
+            echo -e "${red}Download x-ui $1 failed, please check the version exists ${plain}"
+            exit 1
+        fi
+    fi
+
+    # Удаление предыдущей установки x-ui, если она существует
+    if [[ -e /usr/local/x-ui/ ]]; then
+        systemctl stop x-ui  # Остановка службы x-ui
+        rm /usr/local/x-ui/ -rf  # Удаление директории x-ui
+    fi
+
+    # Распаковка скачанного архива
+    tar zxvf x-ui-linux-$(arch3xui).tar.gz
+    # Удаление архива после распаковки
+    rm x-ui-linux-$(arch3xui).tar.gz -f
+    # Переход в директорию x-ui
+    cd x-ui
+    # Делаем скрипт x-ui исполняемым
+    chmod +x x-ui
+
+    # Переименование исполняемых файлов в зависимости от архитектуры
+    if [[ $(arch3xui) == "armv5" || $(arch3xui) == "armv6" || $(arch3xui) == "armv7" ]]; then
+        mv bin/xray-linux-$(arch3xui) bin/xray-linux-arm
+        chmod +x bin/xray-linux-arm
+    fi
+
+    # Делаем все необходимые исполняемые файлы x-ui исполняемыми
+    chmod +x x-ui bin/xray-linux-$(arch3xui)
+    # Копирование файла службы systemd для x-ui
+    cp -f x-ui.service /etc/systemd/system/
+    # Дополнение предыдущего примера кода
+
+    # Скачивание скрипта для управления x-ui и его установка
+    wget --no-check-certificate -O /usr/bin/x-ui https://raw.githubusercontent.com/MHSanaei/3x-ui/main/x-ui.sh
+    chmod +x /usr/local/x-ui/x-ui.sh
+    chmod +x /usr/bin/x-ui
+
+    # Вызов функции конфигурации после установки
+    config_after_install
+
+    # Перезагрузка демона systemd, включение и запуск службы x-ui
+    systemctl daemon-reload
+    systemctl enable x-ui
+    systemctl start x-ui
+
+    # Вывод сообщения о завершении установки и инструкции по использованию
+   
+} # Закрывающая скобка функции install_x-ui
+
+# Запуск основной логики скрипта
+echo -e "${green}Running...${plain}"
+install_base
+install_x-ui $1
+
+    
